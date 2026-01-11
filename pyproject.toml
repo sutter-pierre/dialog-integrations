@@ -13,6 +13,7 @@ dependencies = [
     "ipdb>=0.13.13",
     "jupyter>=1.1.1",
     "loguru>=0.7.3",
+    "mypy>=1.11.0",
     "numpy!=2.4.0",
     "openapi>=2.0.0",
     "openapi-python-client>=0.28.0",
@@ -20,6 +21,7 @@ dependencies = [
     "pyarrow>=22.0.0",
     "pydantic>=2.12.5",
     "pydantic-settings>=2.12.0",
+    "pyright>=1.1.408",
     "python-dotenv>=1.2.1",
     "ruff>=0.14.11",
     "shapely>=2.1.2",
@@ -32,3 +34,63 @@ dialog = "cli:app"
 
 [tool.setuptools]
 py-modules = ["cli", "settings"]
+packages = ["integrations", "integrations.brest", "api"]
+
+[tool.ruff]
+# Exclude auto-generated API client and standard directories
+exclude = [
+    "api/",
+    ".venv",
+    "__pycache__",
+    "*.egg-info",
+]
+line-length = 100
+
+[tool.ruff.lint]
+# Enable recommended rules
+select = ["E", "F", "W", "I"]  # pycodestyle errors, pyflakes, warnings, isort
+ignore = []
+
+[tool.mypy]
+# Basic type checking settings
+python_version = "3.11"
+strict = false
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+
+# Exclude generated API client and directories
+exclude = [
+    "^api/",
+    "^.venv/",
+]
+
+# Per-module options for generated code
+[[tool.mypy.overrides]]
+module = "api.*"
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+module = "shapely.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "geopandas.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "polars.*"
+ignore_missing_imports = true
+
+[tool.pyright]
+# Pyright configuration (used by Pylance in VSCode)
+include = ["cli.py", "settings.py", "integrations"]
+exclude = ["**/__pycache__", ".venv", "api"]
+typeCheckingMode = "basic"
+pythonVersion = "3.11"
+reportMissingImports = "error"
+reportMissingTypeStubs = false
+reportTypedDictNotRequiredAccess = "warning"
+reportOptionalMemberAccess = "warning"
+reportOptionalSubscript = "warning"

@@ -17,8 +17,11 @@ jobs:
       - name: Install Python
         run: make app:build-ci
 
+      - name: Format check
+        run: make app:format-check
+
       - name: Lint
         run: make app:lint
 
-      - name: Format check
-        run: make app:format-check
+      - name: type
+        run: make app:type
