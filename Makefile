@@ -33,3 +33,8 @@ app\:format-check:
 
 app\:type:
 	uv run pyright
+
+app\:prepare-commit:
+	uv run ruff format .
+	uv run ruff check . --fix
+	uv run pyright

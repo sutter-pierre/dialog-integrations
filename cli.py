@@ -4,7 +4,16 @@ from pathlib import Path
 import typer
 from loguru import logger
 
+from settings import Organization, Settings, validate_settings
+
 app = typer.Typer(help="Dialog CLI")
+
+
+@app.callback()
+def main():
+    """Global pre-run hook."""
+    settings = Settings()
+    validate_settings(settings)
 
 
 @app.command()
@@ -14,17 +23,17 @@ def version():
 
 
 @app.command()
-def integrate(network: str):
-    """Sync data for a specific network to Dialog API."""
-
-    integration_dir = Path("integrations") / network
-    main_file = integration_dir / "main.py"
+def integrate(organization: Organization):  # type: ignore[valid-type]
+    """Sync data for a specific organization to Dialog API."""
+    main_file = Path("integrations") / organization.name / "main.py"
 
     try:
         if not main_file.exists():
             raise FileNotFoundError(main_file)
 
-        spec = importlib.util.spec_from_file_location(f"integrations.{network}.main", main_file)
+        spec = importlib.util.spec_from_file_location(
+            f"integrations.{organization}.main", main_file
+        )
         if spec is None or spec.loader is None:
             raise ImportError(f"Cannot load {main_file}")
 
@@ -34,14 +43,20 @@ def integrate(network: str):
         if not hasattr(module, "main"):
             raise AttributeError("main() not found")
 
-        logger.info(f"Running integration for: {network}")
+        logger.info(f"Running integration for: {organization}")
         module.main()
 
     except FileNotFoundError:
-        logger.error(f"No integration found for network: {network}")
+        logger.error(f"No integration found for network: {organization}")
         logger.info(f"Expected file: {main_file}")
         raise typer.Exit(code=1)
 
     except Exception as e:
-        logger.exception(f"Integration failed for {network}: {e}")
+        logger.exception(f"Integration failed for {organization}: {e}")
         raise typer.Exit(code=1)
+
+
+@app.command()
+def publish_measures(organization: Organization):  # type: ignore[valid-type]
+    """Publish all measures"""
+    logger.info(f"Publishing measures for network: {organization}")
