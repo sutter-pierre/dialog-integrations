@@ -34,7 +34,7 @@ dialog = "cli:app"
 
 [tool.setuptools]
 py-modules = ["cli", "settings"]
-packages = ["integrations", "integrations.brest", "api"]
+packages = ["integrations", "api"]
 
 [tool.ruff]
 # Exclude auto-generated API client and standard directories

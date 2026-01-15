@@ -6,22 +6,21 @@ on:
     branches: ["main"]
 
 jobs:
-  lint-format:
+  check-quality:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - uses: astral-sh/setup-uv@v3
-        enable-cache: true
 
       - name: Install Python
         run: make app:build-ci
 
-      - name: Format check
+      - name: Check formatting
         run: make app:format-check
 
-      - name: Lint
+      - name: Check linting
         run: make app:lint
 
-      - name: type
+      - name: Check typing
         run: make app:type
