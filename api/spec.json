@@ -605,6 +605,86 @@
                 }
             }
         },
+        "/api/regulations/{identifier}": {
+            "delete": {
+                "tags": [
+                    "Private"
+                ],
+                "operationId": "delete_api_regulations_delete",
+                "parameters": [
+                    {
+                        "name": "identifier",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "pattern": ".+"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "Arr\u00eat\u00e9 supprim\u00e9"
+                    },
+                    "401": {
+                        "description": "Non authentifi\u00e9 / identifiants client invalides",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "properties": {
+                                        "message": {
+                                            "type": "string",
+                                            "example": "Unauthorized"
+                                        }
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Acc\u00e8s refus\u00e9 (l'arr\u00eat\u00e9 ne peut pas \u00eatre supprim\u00e9)",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "properties": {
+                                        "status": {
+                                            "type": "integer",
+                                            "example": 403
+                                        },
+                                        "detail": {
+                                            "type": "string",
+                                            "example": "L'arr\u00eat\u00e9 ne peut pas \u00eatre supprim\u00e9."
+                                        }
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Arr\u00eat\u00e9 introuvable",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "properties": {
+                                        "status": {
+                                            "type": "integer",
+                                            "example": 404
+                                        },
+                                        "detail": {
+                                            "type": "string",
+                                            "example": "Not Found"
+                                        }
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/regulations/cifs": {
             "get": {
                 "tags": [
@@ -666,7 +746,7 @@
                 }
             }
         },
-        "/api/regulations/{uuid}/publish": {
+        "/api/regulations/publish/{identifier}": {
             "put": {
                 "tags": [
                     "Private"
@@ -674,12 +754,12 @@
                 "operationId": "put_api_regulations_publish",
                 "parameters": [
                     {
-                        "name": "uuid",
+                        "name": "identifier",
                         "in": "path",
                         "required": true,
                         "schema": {
                             "type": "string",
-                            "pattern": "[0-9a-f]{8}-[0-9a-f]{4}-[13-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"
+                            "pattern": ".+"
                         }
                     }
                 ],
@@ -690,9 +770,9 @@
                             "application/json": {
                                 "schema": {
                                     "properties": {
-                                        "uuid": {
+                                        "identifier": {
                                             "type": "string",
-                                            "example": "e413a47e-5928-4353-a8b2-8b7dda27f9a5"
+                                            "example": "ARR-2024-001"
                                         },
                                         "status": {
                                             "type": "string",
@@ -733,26 +813,6 @@
                                         "message": {
                                             "type": "string",
                                             "example": "Unauthorized"
-                                        }
-                                    },
-                                    "type": "object"
-                                }
-                            }
-                        }
-                    },
-                    "403": {
-                        "description": "Organisation non autoris\u00e9e \u00e0 modifier cet arr\u00eat\u00e9",
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "properties": {
-                                        "status": {
-                                            "type": "integer",
-                                            "example": 403
-                                        },
-                                        "detail": {
-                                            "type": "string",
-                                            "example": "Forbidden"
                                         }
                                     },
                                     "type": "object"

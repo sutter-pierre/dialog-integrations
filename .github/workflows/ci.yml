@@ -16,6 +16,9 @@ jobs:
       - name: Install Python
         run: make app:build-ci
 
+      - name: Generate client
+        run: make api:generate-client
+
       - name: Check formatting
         run: make app:format-check
 

@@ -4,7 +4,14 @@ from pathlib import Path
 import typer
 from loguru import logger
 
-from settings import Organization, Settings, validate_settings
+from api.dia_log_client.api.private.get_api_organization_identifiers import (
+    sync_detailed as get_identifiers,
+)
+from api.dia_log_client.api.private.put_api_regulations_publish import (
+    sync_detailed as publish_regulation,
+)
+from integrations.shared import get_client
+from settings import Organization, OrganizationSettings, Settings
 
 app = typer.Typer(help="Dialog CLI")
 
@@ -13,7 +20,7 @@ app = typer.Typer(help="Dialog CLI")
 def main():
     """Global pre-run hook."""
     settings = Settings()
-    validate_settings(settings)
+    OrganizationSettings.validate_all_organization_settings(settings)
 
 
 @app.command()
@@ -57,6 +64,37 @@ def integrate(organization: Organization):  # type: ignore[valid-type]
 
 
 @app.command()
-def publish_measures(organization: Organization):  # type: ignore[valid-type]
+def publish(organization: Organization):  # type: ignore[valid-type]
     """Publish all measures"""
-    logger.info(f"Publishing measures for network: {organization}")
+    settings = OrganizationSettings.from_organization(organization.value)
+    client = get_client(settings)
+
+    logger.info(f"Publishing measures for organization: {organization}")
+
+    # Get the organization identifiers
+    resp = get_identifiers(client=client)
+
+    if resp.parsed is None or not hasattr(resp.parsed, "identifiers"):
+        logger.error("Failed to fetch identifiers")
+        raise typer.Exit(code=1)
+
+    identifiers: list[str] = list(resp.parsed.identifiers)  # type: ignore
+    logger.info(f"Found {len(identifiers)} identifier(s) to publish")
+
+    # Publish each identifier
+    has_error = False
+    for identifier in identifiers:
+        logger.info(f"Publishing identifier: {identifier}")
+        publish_resp = publish_regulation(identifier=identifier, client=client)
+
+        if publish_resp.status_code == 200:
+            logger.success(f"Successfully published: {identifier}")
+        else:
+            logger.error(f"Failed to publish {identifier}: {publish_resp.status_code}")
+            has_error = True
+
+    if has_error:
+        logger.error("Some measures failed to publish")
+        raise typer.Exit(code=1)
+
+    logger.success("Finished publishing all measures")

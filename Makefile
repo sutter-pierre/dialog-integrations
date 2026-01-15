@@ -6,11 +6,11 @@ api\:fetch-spec:
 	curl -f "$(DIALOG_BASE_URL)/api/doc.json" > api/spec.json
 
 api\:generate-client:
-	openapi-python-client generate --path api/spec.json --output-path "api" --overwrite
+	uv run openapi-python-client generate --path api/spec.json --output-path "api" --overwrite
 
 api\:update:
-	make api-fetch-spec
-	make api-generate-client
+	make api:fetch-spec
+	make api:generate-client
 
 app\:run:
 	dialog run

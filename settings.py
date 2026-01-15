@@ -4,23 +4,18 @@ from pathlib import Path
 from loguru import logger
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-organization_names = [
-    p.name
-    for p in Path("integrations").iterdir()
-    if p.is_dir() and p.name != "shared" and not p.name.startswith("__")
-]
-Organization: Enum = Enum(
+Organization = Enum(
     "Organization",
-    {name: name for name in organization_names},
+    {
+        name: name
+        for name in [
+            p.name
+            for p in Path("integrations").iterdir()
+            if p.is_dir() and p.name != "shared" and not p.name.startswith("__")
+        ]
+    },
     type=str,
 )
-
-
-def complete_organization(ctx, param, incomplete):
-    return organization_names
-
-
-env_prefix = "DIALOG_"
 
 
 class Settings(BaseSettings):
@@ -40,23 +35,33 @@ class OrganizationSettings:
     client_secret: str | None = None
 
     def __init__(self, settings: Settings, organization: str):
-        self.network = organization.lower()
+        self.organization = organization.lower()
         self.base_url = settings.base_url
 
-        self.client_id = self._get(settings, "client_id")
-        self.client_secret = self._get(settings, "client_secret")
+        self.client_id = getattr(settings, f"dialog_{organization}_client_id", None)
+        self.client_secret = getattr(settings, f"dialog_{organization}_client_secret", None)
 
-    def _get(self, settings: Settings, key: str) -> str | None:
-        attr = f"dialog_{self.network}_{key}"
-        value = getattr(settings, attr, None)
+    def validate(self) -> bool:
+        """
+        Validate that all public attributes are set.
+        """
+        valid = True
+        for name, value in vars(self).items():
+            if value is None:
+                logger.warning(f"[settings] Missing value for {self.organization}:{name}")
+                valid = False
 
-        if value is None:
-            logger.warning(
-                f"[settings] Missing env var: DIALOG_{self.network.upper()}_{key.upper()}"
-            )
-        return value
+        return valid
 
+    @classmethod
+    def from_organization(cls, organization: str) -> "OrganizationSettings":
+        settings = Settings()
+        organization_settings = OrganizationSettings(settings, organization)
+        if not organization_settings.validate():
+            raise ValueError(f"Invalid settings for organization: {organization}")
+        return organization_settings
 
-def validate_settings(settings: Settings) -> None:
-    for organization in organization_names:
-        OrganizationSettings(settings, organization)
+    @classmethod
+    def validate_all_organization_settings(cls, settings: Settings) -> None:
+        for organization in Organization:  # type: ignore
+            OrganizationSettings(settings, organization.name).validate()
