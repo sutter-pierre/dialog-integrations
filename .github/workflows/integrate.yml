@@ -19,7 +19,7 @@ jobs:
       - id: set-matrix
         run: |
           cd integrations
-          DIRS=$(ls -d */ | sed 's|/||' | grep -vE '^(shared|__pycache__)$' | jq -R . | jq -s .)
+          DIRS=$(ls -d */ | sed 's|/||' | grep -vE '^(shared|__pycache__)$' | jq -Rsc .)
           echo "matrix={\"organization\": $DIRS}" >> $GITHUB_OUTPUT
 
   integrate:
