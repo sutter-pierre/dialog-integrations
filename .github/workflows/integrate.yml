@@ -1,0 +1,49 @@
+name: integrate
+
+on:
+  schedule:
+    # Run every day at midnight UTC
+    - cron: '0 0 * * *'
+  push:
+    branches: ["main"]
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  discover-integrations:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: set-matrix
+        run: |
+          cd integrations
+          DIRS=$(ls -d */ | sed 's|/||' | grep -vE '^(shared|__pycache__)$' | jq -R . | jq -s .)
+          echo "matrix={\"organization\": $DIRS}" >> $GITHUB_OUTPUT
+
+  integrate:
+    needs: discover-integrations
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false  # Continue even if one integration fails
+      matrix: ${{ fromJson(needs.discover-integrations.outputs.matrix) }}
+    environment: ${{ matrix.organization }}  # Use GitHub Environment per organization
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v3
+
+      - name: Install dependencies
+        run: make app:build-ci
+
+      - name: Generate API client
+        run: make api:generate-client
+
+      - name: Run integration for ${{ matrix.organization }}
+        env:
+          DIALOG_BASE_URL: ${{ secrets.DIALOG_BASE_URL }}
+          DIALOG_CLIENT_ID: ${{ secrets.DIALOG_CLIENT_ID }}
+          DIALOG_CLIENT_SECRET: ${{ secrets.DIALOG_CLIENT_SECRET }}
+        run: dialog integrate ${{ matrix.organization }}
