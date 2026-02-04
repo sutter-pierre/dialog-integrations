@@ -21,7 +21,6 @@ from api.dia_log_client.models import (
     SaveVehicleSetDTO,
 )
 from integrations.co_brest.schema import (
-    DESCRIPTION_CONFIG,
     BrestMeasure,
     BrestRawDataSchema,
 )
@@ -31,6 +30,55 @@ URL = "https://www.data.gouv.fr/api/1/datasets/r/3ca7bd06-6489-45a2-aee9-efc6966
 FILENAME = "DEP_ARR_CIRC_STAT_L_V.shp"
 
 transformer = Transformer.from_crs("EPSG:2154", "EPSG:4326", always_xy=True)
+
+DESCRIPTION_CONFIG = {
+    # Limitations de vitesse
+    "Limitation Vitesse": {
+        "measure_type": MeasureTypeEnum.SPEEDLIMITATION,
+    },
+    # Stationnement
+    "Stationnement interdit": {
+        "measure_type": MeasureTypeEnum.PARKINGPROHIBITED,
+    },
+    "Arrêt interdit": {
+        "measure_type": MeasureTypeEnum.PARKINGPROHIBITED,
+    },
+    "Stationnement gênant": {
+        "measure_type": MeasureTypeEnum.PARKINGPROHIBITED,
+    },
+    "Stationnement interdit aux poids-lourds": {
+        "measure_type": MeasureTypeEnum.PARKINGPROHIBITED,
+    },
+    # noEntry – limitations dimensionnelles (poids / hauteur)
+    "Limitation Poids": {
+        "measure_type": MeasureTypeEnum.NOENTRY,
+    },
+    "Limitation Hauteur": {
+        "measure_type": MeasureTypeEnum.NOENTRY,
+    },
+    "Interdit aux transports de marchandises": {
+        "measure_type": MeasureTypeEnum.NOENTRY,
+    },
+    # noEntry – catégories particulières
+    "Interdit dans les 2 sens": {
+        "measure_type": MeasureTypeEnum.NOENTRY,
+    },
+    "Interdit à  tous véhicules à moteur": {
+        "measure_type": MeasureTypeEnum.NOENTRY,
+        "exempted_types": ["bicycle", "pedestrians"],
+    },
+    "Interdit aux véhicules à moteur sauf cyclos": {
+        # motorisés interdits, sauf cyclomoteurs (et vélos + piétons)
+        "measure_type": MeasureTypeEnum.NOENTRY,
+        "exempted_types": ["bicycle", "pedestrians", "other"],
+    },
+    "Limitation Largeur": {
+        "measure_type": MeasureTypeEnum.NOENTRY,
+    },
+    "Sens interdit / Sens unique": {
+        "measure_type": MeasureTypeEnum.NOENTRY,
+    },
+}
 
 
 class Integration(DialogIntegration):
@@ -77,13 +125,11 @@ class Integration(DialogIntegration):
 
     def compute_clean_data(self, raw_data: pl.DataFrame) -> pl.DataFrame:
         return (
-            raw_data.filter(pl.col("DESCRIPTIF").is_in(DESCRIPTION_CONFIG.keys()))
-            .filter(
-                ~(pl.col("DESCRIPTIF").eq("Sens interdit / Sens unique") & pl.col("SENS").eq(1))
-            )
+            raw_data.pipe(compute_measure_type)
             .pipe(compute_save_period_fields)
             .pipe(compute_save_location_fields)
             .pipe(self.compute_regulation_fields)
+            .pipe(compute_measure_max_speed)
         )
 
     def cast_boolean_column(self, column_name: str) -> pl.Expr:
@@ -101,8 +147,7 @@ class Integration(DialogIntegration):
         cfg = DESCRIPTION_CONFIG.get(measure["DESCRIPTIF"], {})
 
         params = {
-            "type_": cfg["measure_type"],
-            "max_speed": measure["VITEMAX"],
+            "type_": MeasureTypeEnum(measure["measure_type_"]),
             "periods": [self.create_save_period_dto(measure)],  # type: ignore
             "locations": [self.create_save_location_dto(measure)],  # type: ignore
             "vehicle_set": self.create_save_vehicle_dto(
@@ -110,13 +155,9 @@ class Integration(DialogIntegration):
             ),
         }
 
-        if params["type_"] == MeasureTypeEnum.SPEEDLIMITATION:
-            assert params["max_speed"] is not None, (
-                "VITEMAX must be defined for speed limitation measures"
-            )
-            assert params["max_speed"] > 0, "VITEMAX must be greater than 0"
-        else:
-            del params["max_speed"]
+        # Add max_speed for SPEEDLIMITATION measures
+        if measure["measure_type_"] == MeasureTypeEnum.SPEEDLIMITATION.value:
+            params["max_speed"] = measure["measure_max_speed"]
 
         return SaveMeasureDTO(**params)
 
@@ -294,4 +335,46 @@ def compute_save_location_fields(df: pl.DataFrame) -> pl.DataFrame:
             (pl.col("LIBCO") + pl.lit(" – ") + pl.col("LIBRU")).alias("location_label"),
             # location_geometry already computed above
         ]
+    )
+
+
+def compute_measure_type(df: pl.DataFrame) -> pl.DataFrame:
+    """
+    Compute measure_type_ field from DESCRIPTIF using DESCRIPTION_CONFIG.
+    """
+    # Create mapping dict from DESCRIPTIF to measure type enum value
+    type_mapping = {
+        descriptif: config["measure_type"].value
+        for descriptif, config in DESCRIPTION_CONFIG.items()
+    }
+    return (
+        df.filter(pl.col("DESCRIPTIF").is_in(DESCRIPTION_CONFIG.keys()))
+        .filter(~(pl.col("DESCRIPTIF").eq("Sens interdit / Sens unique") & pl.col("SENS").eq(1)))
+        .with_columns(pl.col("DESCRIPTIF").replace(type_mapping).alias("measure_type_"))
+    )
+
+
+def compute_measure_max_speed(df: pl.DataFrame) -> pl.DataFrame:
+    """
+    Compute measure_max_speed field from VITEMAX with validation.
+    - For SPEEDLIMITATION: use VITEMAX, must be not null and > 0
+    - For other types: set to None
+    Filters out SPEEDLIMITATION rows with invalid VITEMAX.
+    """
+    # Filter out invalid speed limitations
+    invalid_speed = (pl.col("measure_type_") == MeasureTypeEnum.SPEEDLIMITATION.value) & (
+        (pl.col("VITEMAX").is_null()) | (pl.col("VITEMAX") <= 0)
+    )
+    n_invalid = df.select(invalid_speed.sum()).item()
+    if n_invalid > 0:
+        logger.warning(f"Dropping {n_invalid} SPEEDLIMITATION measures with invalid VITEMAX")
+
+    df = df.filter(~invalid_speed)
+
+    # Compute max_speed: use VITEMAX for SPEEDLIMITATION, None otherwise
+    return df.with_columns(
+        pl.when(pl.col("measure_type_") == MeasureTypeEnum.SPEEDLIMITATION.value)
+        .then(pl.col("VITEMAX"))
+        .otherwise(None)
+        .alias("measure_max_speed")
     )

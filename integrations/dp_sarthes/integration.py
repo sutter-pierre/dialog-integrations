@@ -47,11 +47,9 @@ class Integration(DialogIntegration):
             .pipe(compute_start_date)
             .pipe(compute_save_location_fields)
             .pipe(self.compute_regulation_fields)
+            .pipe(compute_measure_type)
             .select(
                 [
-                    pl.col("id"),
-                    pl.col("title"),
-                    pl.col("VITESSE").alias("max_speed"),
                     # Period fields
                     pl.col("period_start_date"),
                     pl.col("period_end_date"),
@@ -70,14 +68,17 @@ class Integration(DialogIntegration):
                     pl.col("regulation_subject"),
                     pl.col("regulation_title"),
                     pl.col("regulation_other_category_text"),
+                    # Measure fields
+                    pl.col("measure_type_"),
+                    pl.col("measure_max_speed"),
                 ]
             )
         )
 
     def create_measure(self, measure: SarthesMeasure) -> SaveMeasureDTO:
         return SaveMeasureDTO(
-            type_=MeasureTypeEnum.SPEEDLIMITATION,
-            max_speed=int(measure["max_speed"]),
+            type_=MeasureTypeEnum(measure["measure_type_"]),
+            max_speed=int(measure["measure_max_speed"]),
             periods=[self.create_save_period_dto(measure)],  # type: ignore
             locations=[self.create_save_location_dto(measure)],  # type: ignore
             vehicle_set=SaveVehicleSetDTO(all_vehicles=True),
@@ -109,7 +110,7 @@ class Integration(DialogIntegration):
 
 def compute_max_speed(df: pl.DataFrame) -> pl.DataFrame:
     """
-    Cast VITESSE to int and drop rows where VITESSE is null or 0.
+    Cast VITESSE to int, drop rows where VITESSE is invalid, and rename to max_speed.
     """
     df = df.with_columns(pl.col("VITESSE").cast(pl.Int64))
 
@@ -119,7 +120,10 @@ def compute_max_speed(df: pl.DataFrame) -> pl.DataFrame:
     if n_removed:
         logger.info(f"Removing {n_removed} rows with invalid VITESSE")
 
-    return df.filter(~invalid)
+    df = df.filter(~invalid)
+
+    # Rename VITESSE to max_speed
+    return df.rename({"VITESSE": "measure_max_speed"})
 
 
 def build_id_and_drop_duplicates(df: pl.DataFrame) -> pl.DataFrame:
@@ -262,3 +266,11 @@ def compute_save_location_fields(df: pl.DataFrame) -> pl.DataFrame:
             pl.col("geo_shape").alias("location_geometry"),
         ]
     )
+
+
+def compute_measure_type(df: pl.DataFrame) -> pl.DataFrame:
+    """
+    Compute measure_type_ field for Sarthes.
+    All measures are SPEEDLIMITATION.
+    """
+    return df.with_columns(pl.lit(MeasureTypeEnum.SPEEDLIMITATION.value).alias("measure_type_"))

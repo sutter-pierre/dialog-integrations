@@ -24,9 +24,6 @@ class SarthesRawDataSchema(pa.DataFrameModel):
 class SarthesMeasure(TypedDict):
     """Schema for clean data after processing."""
 
-    id: str
-    title: str
-    max_speed: int
     # Period fields (prefixed with period_)
     period_start_date: str | None
     period_end_date: str | None
@@ -45,3 +42,6 @@ class SarthesMeasure(TypedDict):
     regulation_subject: str
     regulation_title: str
     regulation_other_category_text: str
+    # Measure fields
+    measure_type_: str
+    measure_max_speed: int

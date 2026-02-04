@@ -207,3 +207,65 @@ def test_compute_regulation_fields(integration):
     assert result["regulation_title"][1] == "Limitation Vitesse – Rue A"  # Same as first row
     assert result["regulation_title"][2] == "Stationnement interdit – Rue C"
     assert result["regulation_other_category_text"][0] == "Circulation"
+
+
+def test_compute_measure_type():
+    """Test that compute_measure_type maps DESCRIPTIF to measure_type_."""
+    from api.dia_log_client.models import MeasureTypeEnum
+    from integrations.co_brest.integration import compute_measure_type
+
+    df = pl.DataFrame(
+        {
+            "DESCRIPTIF": ["Limitation Vitesse", "Stationnement interdit", "Limitation Poids"],
+            "SENS": [1, 1, 1],
+        }
+    )
+
+    result = compute_measure_type(df)
+
+    assert "measure_type_" in result.columns
+    assert result.height == 3
+    assert result["measure_type_"][0] == MeasureTypeEnum.SPEEDLIMITATION.value
+    assert result["measure_type_"][1] == MeasureTypeEnum.PARKINGPROHIBITED.value
+    assert result["measure_type_"][2] == MeasureTypeEnum.NOENTRY.value
+
+
+def test_compute_measure_type_filters_invalid_descriptif():
+    """Test that compute_measure_type filters out rows with invalid DESCRIPTIF."""
+    from integrations.co_brest.integration import compute_measure_type
+
+    df = pl.DataFrame(
+        {
+            "DESCRIPTIF": ["Limitation Vitesse", "Invalid Description", "Stationnement interdit"],
+            "SENS": [1, 1, 1],
+        }
+    )
+
+    result = compute_measure_type(df)
+
+    # Should filter out the invalid description
+    assert result.height == 2
+    assert result["DESCRIPTIF"].to_list() == ["Limitation Vitesse", "Stationnement interdit"]
+
+
+def test_compute_measure_type_filters_sens_unique():
+    """Test that compute_measure_type filters Sens interdit/Sens unique with SENS=1."""
+    from integrations.co_brest.integration import compute_measure_type
+
+    df = pl.DataFrame(
+        {
+            "DESCRIPTIF": [
+                "Sens interdit / Sens unique",
+                "Sens interdit / Sens unique",
+                "Limitation Vitesse",
+            ],
+            "SENS": [1, 2, 1],  # First should be filtered, second kept
+        }
+    )
+
+    result = compute_measure_type(df)
+
+    # Should filter out "Sens interdit / Sens unique" with SENS=1
+    assert result.height == 2
+    assert result["DESCRIPTIF"].to_list() == ["Sens interdit / Sens unique", "Limitation Vitesse"]
+    assert result["SENS"].to_list() == [2, 1]
