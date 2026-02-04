@@ -19,12 +19,14 @@ from api.dia_log_client.api.private.put_api_regulations_publish import (
     sync_detailed as publish_regulation,
 )
 from api.dia_log_client.models import (
+    MeasureTypeEnum,
     PostApiRegulationsAddBody,
     PostApiRegulationsAddBodyCategory,
     PostApiRegulationsAddBodyStatus,
     PostApiRegulationsAddBodySubject,
     RoadTypeEnum,
     SaveLocationDTO,
+    SaveMeasureDTO,
     SavePeriodDTO,
     SaveRawGeoJSONDTO,
     SaveVehicleSetDTO,
@@ -38,6 +40,43 @@ PY_TO_POLARS = {
     bool: pl.Boolean,
     datetime: pl.Datetime,
 }
+
+
+class RegulationMeasure(TypedDict):
+    """
+    Unified type for all measure and regulation data.
+    Contains all fields needed to create regulations and measures.
+    """
+
+    # Period fields (prefixed with period_)
+    period_start_date: str | None
+    period_end_date: str | None
+    period_start_time: str | None
+    period_end_time: str | None
+    period_recurrence_type: str | None
+    period_is_permanent: bool | None
+    # Location fields (prefixed with location_)
+    location_road_type: str
+    location_label: str
+    location_geometry: str
+    # Regulation fields (prefixed with regulation_)
+    regulation_identifier: str
+    regulation_status: str
+    regulation_category: str
+    regulation_subject: str
+    regulation_title: str
+    regulation_other_category_text: str
+    # Measure fields
+    measure_type_: str
+    measure_max_speed: int | None
+    # Vehicle fields (prefixed with vehicle_)
+    vehicle_all_vehicles: bool
+    vehicle_heavyweight_max_weight: float | None
+    vehicle_max_height: float | None
+    vehicle_max_width: float | None
+    vehicle_exempted_types: list[str] | None
+    vehicle_restricted_types: list[str] | None
+    vehicle_other_exempted_type_text: str | None
 
 
 def typed_dict_to_polars_schema(td: type[TypedDict]) -> dict[str, pl.DataType]:  # type: ignore
@@ -140,6 +179,9 @@ class DialogIntegration:
         validated_data = self.validate_raw_data(raw_data)
         clean_data = validated_data.pipe(self.compute_clean_data)
         logger.info(f"After cleaning, got {clean_data.shape[0]} records")
+
+        # Select only RegulationMeasure fields
+        clean_data = self.select_regulation_measure_fields(clean_data)
 
         regulations = self.create_regulations(clean_data)
         for regulation in regulations:
@@ -250,12 +292,37 @@ class DialogIntegration:
         """
         raise NotImplementedError("Subclasses must implement compute_clean_data method")
 
-    def create_measure(self, row: dict):
+    def select_regulation_measure_fields(self, df: pl.DataFrame) -> pl.DataFrame:
         """
-        Create a single measure from a row of clean data.
-        Subclasses must implement this method.
+        Select only the fields defined in RegulationMeasure from the dataframe.
+        This ensures we only keep the necessary columns for creating regulations.
         """
-        raise NotImplementedError("Subclasses must implement create_measure method")
+        # Get field names from RegulationMeasure TypedDict
+        required_fields = list(get_type_hints(RegulationMeasure).keys())
+
+        # Filter to only include fields that exist in the dataframe
+        available_fields = [field for field in required_fields if field in df.columns]
+
+        return df.select(available_fields)
+
+    def create_measure(self, measure: RegulationMeasure) -> SaveMeasureDTO:
+        """
+        Create a single measure from a RegulationMeasure.
+        Default implementation that works for most cases.
+        Subclasses can override if needed.
+        """
+        params = {
+            "type_": MeasureTypeEnum(measure["measure_type_"]),
+            "periods": [self.create_save_period_dto(measure)],
+            "locations": [self.create_save_location_dto(measure)],
+            "vehicle_set": self.create_save_vehicle_dto(measure),
+        }
+
+        # Add max_speed if present and not None
+        if measure["measure_type_"] == MeasureTypeEnum.SPEEDLIMITATION.value:
+            params["max_speed"] = int(measure["measure_max_speed"])  # type: ignore
+
+        return SaveMeasureDTO(**params)
 
     def create_regulations(self, clean_data: pl.DataFrame) -> list[PostApiRegulationsAddBody]:
         """
@@ -270,7 +337,7 @@ class DialogIntegration:
             measures = []
             for row in group_df.iter_rows(named=True):
                 try:
-                    measures.append(self.create_measure(row))
+                    measures.append(self.create_measure(row))  # type: ignore
                 except Exception as e:
                     logger.error(f"Error creating measure: {e}")
 
@@ -295,9 +362,9 @@ class DialogIntegration:
 
         return regulations
 
-    def create_save_period_dto(self, measure: dict) -> SavePeriodDTO:
+    def create_save_period_dto(self, measure: RegulationMeasure) -> SavePeriodDTO:
         """
-        Create a SavePeriodDTO from a measure with period_ prefixed fields.
+        Create a SavePeriodDTO from a RegulationMeasure with period_ prefixed fields.
         Any field starting with 'period_' will be mapped to SavePeriodDTO,
         with the prefix stripped (e.g., period_start_date -> start_date).
         """
@@ -309,9 +376,9 @@ class DialogIntegration:
 
         return SavePeriodDTO(**period_fields)
 
-    def create_save_location_dto(self, measure: dict) -> SaveLocationDTO:
+    def create_save_location_dto(self, measure: RegulationMeasure) -> SaveLocationDTO:
         """
-        Create a SaveLocationDTO from a measure with location_ prefixed fields.
+        Create a SaveLocationDTO from a RegulationMeasure with location_ prefixed fields.
         Expects location_road_type (string), location_label, and location_geometry fields.
         """
         road_type_value = measure["location_road_type"]
@@ -325,7 +392,7 @@ class DialogIntegration:
             ),
         )
 
-    def create_save_vehicle_dto(self, measure: dict) -> SaveVehicleSetDTO:
+    def create_save_vehicle_dto(self, measure: RegulationMeasure) -> SaveVehicleSetDTO:
         """
         Create a SaveVehicleSetDTO from a measure with vehicle_ prefixed fields.
         Intelligently handles the all_vehicles flag:

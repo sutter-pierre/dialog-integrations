@@ -11,9 +11,8 @@ from api.dia_log_client.models import (
     PostApiRegulationsAddBodyStatus,
     PostApiRegulationsAddBodySubject,
     RoadTypeEnum,
-    SaveMeasureDTO,
 )
-from integrations.dp_sarthes.schema import SarthesMeasure, SarthesRawDataSchema
+from integrations.dp_sarthes.schema import SarthesRawDataSchema
 from integrations.shared import DialogIntegration
 
 URL = (
@@ -48,48 +47,6 @@ class Integration(DialogIntegration):
             .pipe(self.compute_regulation_fields)
             .pipe(compute_measure_type)
             .pipe(compute_save_vehicle_fields)
-            .select(
-                [
-                    # Period fields
-                    pl.col("period_start_date"),
-                    pl.col("period_end_date"),
-                    pl.col("period_start_time"),
-                    pl.col("period_end_time"),
-                    pl.col("period_recurrence_type"),
-                    pl.col("period_is_permanent"),
-                    # Location fields
-                    pl.col("location_road_type"),
-                    pl.col("location_label"),
-                    pl.col("location_geometry"),
-                    # Regulation fields
-                    pl.col("regulation_identifier"),
-                    pl.col("regulation_status"),
-                    pl.col("regulation_category"),
-                    pl.col("regulation_subject"),
-                    pl.col("regulation_title"),
-                    pl.col("regulation_other_category_text"),
-                    # Measure fields
-                    pl.col("measure_type_"),
-                    pl.col("measure_max_speed"),
-                    # Vehicle fields
-                    pl.col("vehicle_all_vehicles"),
-                    pl.col("vehicle_heavyweight_max_weight"),
-                    pl.col("vehicle_max_height"),
-                    pl.col("vehicle_max_width"),
-                    pl.col("vehicle_exempted_types"),
-                    pl.col("vehicle_restricted_types"),
-                    pl.col("vehicle_other_exempted_type_text"),
-                ]
-            )
-        )
-
-    def create_measure(self, measure: SarthesMeasure) -> SaveMeasureDTO:
-        return SaveMeasureDTO(
-            type_=MeasureTypeEnum(measure["measure_type_"]),
-            max_speed=int(measure["measure_max_speed"]),
-            periods=[self.create_save_period_dto(measure)],  # type: ignore
-            locations=[self.create_save_location_dto(measure)],  # type: ignore
-            vehicle_set=self.create_save_vehicle_dto(measure),  # type: ignore
         )
 
     def compute_regulation_fields(self, df: pl.DataFrame) -> pl.DataFrame:

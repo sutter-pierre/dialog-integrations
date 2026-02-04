@@ -19,12 +19,8 @@ from api.dia_log_client.models import (
     PostApiRegulationsAddBodyStatus,
     PostApiRegulationsAddBodySubject,
     RoadTypeEnum,
-    SaveMeasureDTO,
 )
-from integrations.co_brest.schema import (
-    BrestMeasure,
-    BrestRawDataSchema,
-)
+from integrations.co_brest.schema import BrestRawDataSchema
 from integrations.shared import DialogIntegration
 
 URL = "https://www.data.gouv.fr/api/1/datasets/r/3ca7bd06-6489-45a2-aee9-efc6966121b2"
@@ -123,20 +119,6 @@ class Integration(DialogIntegration):
             .alias(column_name)
             .fill_null(False)
         )
-
-    def create_measure(self, measure: BrestMeasure) -> SaveMeasureDTO:
-        params = {
-            "type_": MTE(measure["measure_type_"]),
-            "periods": [self.create_save_period_dto(measure)],  # type: ignore
-            "locations": [self.create_save_location_dto(measure)],  # type: ignore
-            "vehicle_set": self.create_save_vehicle_dto(measure),  # type: ignore
-        }
-
-        # Add max_speed for SPEEDLIMITATION measures
-        if measure["measure_type_"] == MTE.SPEEDLIMITATION.value:
-            params["max_speed"] = measure["measure_max_speed"]
-
-        return SaveMeasureDTO(**params)
 
     def compute_regulation_fields(self, df: pl.DataFrame) -> pl.DataFrame:
         """
