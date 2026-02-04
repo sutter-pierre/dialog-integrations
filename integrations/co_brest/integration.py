@@ -1,9 +1,8 @@
 import json
 import tempfile
 import zipfile
-from collections import defaultdict
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import geopandas as gpd
 import polars as pl
@@ -14,7 +13,6 @@ from shapely.geometry import mapping
 
 from api.dia_log_client.models import (
     MeasureTypeEnum,
-    PostApiRegulationsAddBody,
     PostApiRegulationsAddBodyCategory,
     PostApiRegulationsAddBodyStatus,
     PostApiRegulationsAddBodySubject,
@@ -36,7 +34,7 @@ transformer = Transformer.from_crs("EPSG:2154", "EPSG:4326", always_xy=True)
 
 
 class Integration(DialogIntegration):
-    draft = False
+    status = PostApiRegulationsAddBodyStatus.PUBLISHED
     raw_data_schema = BrestRawDataSchema
 
     def fetch_raw_data(self) -> pl.DataFrame:
@@ -75,7 +73,7 @@ class Integration(DialogIntegration):
                 self.cast_boolean_column("CYCLO"),
                 self.cast_boolean_column("VELO"),
             ]
-        )
+        ).filter(~(pl.col("NOARR").eq("")))
 
     def compute_clean_data(self, raw_data: pl.DataFrame) -> pl.DataFrame:
         return (
@@ -83,9 +81,9 @@ class Integration(DialogIntegration):
             .filter(
                 ~(pl.col("DESCRIPTIF").eq("Sens interdit / Sens unique") & pl.col("SENS").eq(1))
             )
-            .filter(~(pl.col("NOARR").eq("")))
             .pipe(compute_save_period_fields)
             .pipe(compute_save_location_fields)
+            .pipe(self.compute_regulation_fields)
         )
 
     def cast_boolean_column(self, column_name: str) -> pl.Expr:
@@ -98,50 +96,6 @@ class Integration(DialogIntegration):
             .alias(column_name)
             .fill_null(False)
         )
-
-    def create_regulations(self, clean_data: pl.DataFrame) -> list[PostApiRegulationsAddBody]:
-        # First, group measures by regulation ID
-        regulation_id_to_measures = defaultdict(list)
-        for measure_row in clean_data.sort("NOARR").iter_rows(named=True):
-            try:
-                measure_row = cast(BrestMeasure, measure_row)
-                measure = self.create_measure(measure_row)
-                regulation_id_to_measures[measure_row["NOARR"]].append(measure)
-            except Exception as e:
-                logger.error(f"Error creating measure for regulation {measure_row['NOARR']}: {e}")
-
-        # Then, create regulation payloads
-        regulations = []
-        for regulation_id, measures in regulation_id_to_measures.items():
-            # Get first measure row to build title
-            try:
-                first_row = (
-                    clean_data.filter(pl.col("NOARR") == regulation_id).head(1).row(0, named=True)
-                )
-            except Exception:
-                raise ValueError(f"Could not find first row for regulation {regulation_id}")
-
-            title = f"{first_row['DESCRIPTIF']} – {first_row['LIBRU']}"
-            status = (
-                PostApiRegulationsAddBodyStatus.DRAFT
-                if self.draft
-                else PostApiRegulationsAddBodyStatus.PUBLISHED
-            )
-
-            # Build payload
-            regulations.append(
-                PostApiRegulationsAddBody(
-                    identifier=regulation_id,
-                    category=PostApiRegulationsAddBodyCategory.PERMANENTREGULATION,
-                    status=status,
-                    subject=PostApiRegulationsAddBodySubject.OTHER,
-                    title=title,
-                    other_category_text="Circulation",
-                    measures=measures,  # type: ignore
-                )
-            )
-
-        return regulations
 
     def create_measure(self, measure: BrestMeasure) -> SaveMeasureDTO:
         cfg = DESCRIPTION_CONFIG.get(measure["DESCRIPTIF"], {})
@@ -222,6 +176,52 @@ class Integration(DialogIntegration):
         cleaned = {k: v for k, v in params.items() if v not in (None, [], {})}
 
         return SaveVehicleSetDTO(**cleaned)
+
+    def compute_regulation_fields(self, df: pl.DataFrame) -> pl.DataFrame:
+        """
+        Compute all regulation fields for PostApiRegulationsAddBody.
+        For Brest, each NOARR (regulation ID) can have multiple measures.
+        Regulation title is built from first row's DESCRIPTIF and LIBRU.
+        - regulation_identifier: from NOARR field
+        - regulation_status: from self.status
+        - regulation_category: PERMANENTREGULATION
+        - regulation_subject: OTHER
+        - regulation_title: "{DESCRIPTIF} – {LIBRU}"
+        - regulation_other_category_text: "Circulation"
+        """
+        # For each NOARR, we need the first row's DESCRIPTIF and LIBRU for the title
+        # Add a row number per NOARR group to identify first row
+        df = df.with_columns(
+            pl.col("NOARR").cum_count().over("NOARR").alias("_row_num_in_regulation")
+        )
+
+        # Get the first row's title for each regulation
+        first_row_titles = df.filter(pl.col("_row_num_in_regulation") == 1).select(
+            [
+                pl.col("NOARR"),
+                (pl.col("DESCRIPTIF") + pl.lit(" – ") + pl.col("LIBRU")).alias("_regulation_title"),
+            ]
+        )
+
+        # Join back to get title for all rows
+        df = df.join(first_row_titles, on="NOARR", how="left")
+
+        # Add regulation fields
+        df = df.with_columns(
+            [
+                pl.col("NOARR").alias("regulation_identifier"),
+                pl.lit(self.status.value).alias("regulation_status"),
+                pl.lit(PostApiRegulationsAddBodyCategory.PERMANENTREGULATION.value).alias(
+                    "regulation_category"
+                ),
+                pl.lit(PostApiRegulationsAddBodySubject.OTHER.value).alias("regulation_subject"),
+                pl.col("_regulation_title").alias("regulation_title"),
+                pl.lit("Circulation").alias("regulation_other_category_text"),
+            ]
+        )
+
+        # Drop helper columns
+        return df.drop(["_row_num_in_regulation", "_regulation_title"])
 
 
 def compute_save_period_fields(df: pl.DataFrame) -> pl.DataFrame:

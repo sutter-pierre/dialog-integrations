@@ -31,7 +31,7 @@ def test_validate_raw_data(integration, raw_data):
 
 
 def test_preprocess_casts_booleans(integration, raw_data):
-    """Test that preprocessing casts VELO and CYCLO to boolean."""
+    """Test that preprocessing casts VELO and CYCLO to boolean and filters empty NOARR."""
     schema_columns = list(BrestRawDataSchema.to_schema().columns.keys())
     df = raw_data.select(schema_columns)
 
@@ -40,11 +40,13 @@ def test_preprocess_casts_booleans(integration, raw_data):
     assert preprocessed["VELO"].dtype == pl.Boolean
     assert preprocessed["CYCLO"].dtype == pl.Boolean
     assert all(v in [True, False] for v in preprocessed["VELO"].to_list())
+    # Check that empty NOARR rows are filtered out
+    assert all(noarr != "" for noarr in preprocessed["NOARR"].to_list())
 
 
 def test_cast_boolean_column_oui_to_true(integration):
     """Test that 'OUI' is cast to True."""
-    df = pl.DataFrame({"test_col": ["OUI", "oui", "Oui"]})
+    df = pl.DataFrame({"test_col": ["OUI", "oui", "Oui"], "NOARR": ["A", "B", "C"]})
 
     result = df.with_columns(integration.cast_boolean_column("test_col"))
 
@@ -54,7 +56,7 @@ def test_cast_boolean_column_oui_to_true(integration):
 
 def test_cast_boolean_column_non_to_false(integration):
     """Test that 'NON' is cast to False."""
-    df = pl.DataFrame({"test_col": ["NON", "non", "Non"]})
+    df = pl.DataFrame({"test_col": ["NON", "non", "Non"], "NOARR": ["A", "B", "C"]})
 
     result = df.with_columns(integration.cast_boolean_column("test_col"))
 
@@ -64,7 +66,7 @@ def test_cast_boolean_column_non_to_false(integration):
 
 def test_cast_boolean_column_null_to_false(integration):
     """Test that null values are filled with False."""
-    df = pl.DataFrame({"test_col": ["OUI", None, "NON"]})
+    df = pl.DataFrame({"test_col": ["OUI", None, "NON"], "NOARR": ["A", "B", "C"]})
 
     result = df.with_columns(integration.cast_boolean_column("test_col"))
 
@@ -177,3 +179,31 @@ def test_compute_save_location_fields_filters_null_geometry():
 
     assert result.height == 2
     assert result["location_label"].to_list() == ["Commune A – Rue 1", "Commune C – Rue 3"]
+
+
+def test_compute_regulation_fields(integration):
+    """Test that compute_regulation_fields creates all required fields and groups by NOARR."""
+    df = pl.DataFrame(
+        {
+            "NOARR": ["REG001", "REG001", "REG002"],
+            "DESCRIPTIF": ["Limitation Vitesse", "Limitation Vitesse", "Stationnement interdit"],
+            "LIBRU": ["Rue A", "Rue B", "Rue C"],
+        }
+    )
+
+    result = integration.compute_regulation_fields(df)
+
+    # Check all regulation fields exist
+    assert "regulation_identifier" in result.columns
+    assert "regulation_status" in result.columns
+    assert "regulation_category" in result.columns
+    assert "regulation_subject" in result.columns
+    assert "regulation_title" in result.columns
+    assert "regulation_other_category_text" in result.columns
+
+    # Check values - all rows with same NOARR should have same regulation_title (from first row)
+    assert result["regulation_identifier"].to_list() == ["REG001", "REG001", "REG002"]
+    assert result["regulation_title"][0] == "Limitation Vitesse – Rue A"
+    assert result["regulation_title"][1] == "Limitation Vitesse – Rue A"  # Same as first row
+    assert result["regulation_title"][2] == "Stationnement interdit – Rue C"
+    assert result["regulation_other_category_text"][0] == "Circulation"

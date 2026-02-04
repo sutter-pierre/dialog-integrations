@@ -155,3 +155,28 @@ def test_compute_save_location_fields_filters_null_geometry():
 
     assert result.height == 2
     assert result["location_label"].to_list() == ["Route 1", "Route 3"]
+
+
+def test_compute_regulation_fields(integration):
+    """Test that compute_regulation_fields creates all required fields."""
+    df = pl.DataFrame(
+        {
+            "id": ["reg-1", "reg-2"],
+            "title": ["Speed limit 50", "Speed limit 30"],
+        }
+    )
+
+    result = integration.compute_regulation_fields(df)
+
+    # Check all regulation fields exist
+    assert "regulation_identifier" in result.columns
+    assert "regulation_status" in result.columns
+    assert "regulation_category" in result.columns
+    assert "regulation_subject" in result.columns
+    assert "regulation_title" in result.columns
+    assert "regulation_other_category_text" in result.columns
+
+    # Check values
+    assert result["regulation_identifier"].to_list() == ["reg-1", "reg-2"]
+    assert result["regulation_title"].to_list() == ["Speed limit 50", "Speed limit 30"]
+    assert result["regulation_other_category_text"][0] == "Limitation de vitesse"

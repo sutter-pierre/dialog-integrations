@@ -107,6 +107,13 @@ class BrestMeasure(TypedDict):
     location_road_type: str
     location_label: str
     location_geometry: str
+    # Regulation fields (prefixed with regulation_)
+    regulation_identifier: str
+    regulation_status: str
+    regulation_category: str
+    regulation_subject: str
+    regulation_title: str
+    regulation_other_category_text: str
 
 
 BREST_SCHEMA = typed_dict_to_polars_schema(BrestMeasure)

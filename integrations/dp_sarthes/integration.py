@@ -1,6 +1,5 @@
 import hashlib
 import io
-from typing import cast
 
 import polars as pl
 import requests
@@ -8,7 +7,6 @@ from loguru import logger
 
 from api.dia_log_client.models import (
     MeasureTypeEnum,
-    PostApiRegulationsAddBody,
     PostApiRegulationsAddBodyCategory,
     PostApiRegulationsAddBodyStatus,
     PostApiRegulationsAddBodySubject,
@@ -27,7 +25,7 @@ URL = (
 
 
 class Integration(DialogIntegration):
-    draft = True
+    status = PostApiRegulationsAddBodyStatus.DRAFT
     raw_data_schema = SarthesRawDataSchema
 
     def fetch_raw_data(self) -> pl.DataFrame:
@@ -43,12 +41,12 @@ class Integration(DialogIntegration):
 
     def compute_clean_data(self, raw_data: pl.DataFrame) -> pl.DataFrame:
         return (
-            raw_data.pipe(compute_vitesse)
+            raw_data.pipe(compute_max_speed)
             .pipe(build_id_and_drop_duplicates)
             .pipe(compute_title)
             .pipe(compute_start_date)
             .pipe(compute_save_location_fields)
-            .filter(pl.col("location_geometry").is_not_null())
+            .pipe(self.compute_regulation_fields)
             .select(
                 [
                     pl.col("id"),
@@ -65,39 +63,16 @@ class Integration(DialogIntegration):
                     pl.col("location_road_type"),
                     pl.col("location_label"),
                     pl.col("location_geometry"),
+                    # Regulation fields
+                    pl.col("regulation_identifier"),
+                    pl.col("regulation_status"),
+                    pl.col("regulation_category"),
+                    pl.col("regulation_subject"),
+                    pl.col("regulation_title"),
+                    pl.col("regulation_other_category_text"),
                 ]
             )
         )
-
-    def create_regulations(self, clean_data: pl.DataFrame) -> list[PostApiRegulationsAddBody]:
-        regulations = []
-
-        for row in clean_data.iter_rows(named=True):
-            try:
-                row = cast(SarthesMeasure, row)
-                measure = self.create_measure(row)
-
-                status = (
-                    PostApiRegulationsAddBodyStatus.DRAFT
-                    if self.draft
-                    else PostApiRegulationsAddBodyStatus.PUBLISHED
-                )
-
-                regulations.append(
-                    PostApiRegulationsAddBody(
-                        identifier=row["id"],
-                        category=PostApiRegulationsAddBodyCategory.PERMANENTREGULATION,
-                        status=status,
-                        subject=PostApiRegulationsAddBodySubject.OTHER,
-                        title=row["title"],
-                        other_category_text="Limitation de vitesse",
-                        measures=[measure],  # type: ignore
-                    )
-                )
-            except Exception as e:
-                logger.error(f"Error creating regulation for id {row.get('id')}: {e}")
-
-        return regulations
 
     def create_measure(self, measure: SarthesMeasure) -> SaveMeasureDTO:
         return SaveMeasureDTO(
@@ -108,8 +83,31 @@ class Integration(DialogIntegration):
             vehicle_set=SaveVehicleSetDTO(all_vehicles=True),
         )
 
+    def compute_regulation_fields(self, df: pl.DataFrame) -> pl.DataFrame:
+        """
+        Compute all regulation fields for PostApiRegulationsAddBody.
+        - regulation_identifier: from id field
+        - regulation_status: from self.status
+        - regulation_category: PERMANENTREGULATION
+        - regulation_subject: OTHER
+        - regulation_title: from title field
+        - regulation_other_category_text: "Limitation de vitesse"
+        """
+        return df.with_columns(
+            [
+                pl.col("id").alias("regulation_identifier"),
+                pl.lit(self.status.value).alias("regulation_status"),
+                pl.lit(PostApiRegulationsAddBodyCategory.PERMANENTREGULATION.value).alias(
+                    "regulation_category"
+                ),
+                pl.lit(PostApiRegulationsAddBodySubject.OTHER.value).alias("regulation_subject"),
+                pl.col("title").alias("regulation_title"),
+                pl.lit("Limitation de vitesse").alias("regulation_other_category_text"),
+            ]
+        )
 
-def compute_vitesse(df: pl.DataFrame) -> pl.DataFrame:
+
+def compute_max_speed(df: pl.DataFrame) -> pl.DataFrame:
     """
     Cast VITESSE to int and drop rows where VITESSE is null or 0.
     """
@@ -199,6 +197,36 @@ def compute_start_date(df: pl.DataFrame) -> pl.DataFrame:
             pl.lit(None).alias("period_end_time"),
             pl.lit("everyDay").alias("period_recurrence_type"),
             pl.lit(True).alias("period_is_permanent"),
+        ]
+    )
+
+
+def compute_regulation_fields(df: pl.DataFrame, draft: bool) -> pl.DataFrame:
+    """
+    Compute all regulation fields for PostApiRegulationsAddBody.
+    - regulation_identifier: from id field
+    - regulation_status: DRAFT or PUBLISHED based on draft flag
+    - regulation_category: PERMANENTREGULATION
+    - regulation_subject: OTHER
+    - regulation_title: from title field
+    - regulation_other_category_text: "Limitation de vitesse"
+    """
+    status = (
+        PostApiRegulationsAddBodyStatus.DRAFT.value
+        if draft
+        else PostApiRegulationsAddBodyStatus.PUBLISHED.value
+    )
+
+    return df.with_columns(
+        [
+            pl.col("id").alias("regulation_identifier"),
+            pl.lit(status).alias("regulation_status"),
+            pl.lit(PostApiRegulationsAddBodyCategory.PERMANENTREGULATION.value).alias(
+                "regulation_category"
+            ),
+            pl.lit(PostApiRegulationsAddBodySubject.OTHER.value).alias("regulation_subject"),
+            pl.col("title").alias("regulation_title"),
+            pl.lit("Limitation de vitesse").alias("regulation_other_category_text"),
         ]
     )
 

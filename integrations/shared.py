@@ -20,6 +20,9 @@ from api.dia_log_client.api.private.put_api_regulations_publish import (
 )
 from api.dia_log_client.models import (
     PostApiRegulationsAddBody,
+    PostApiRegulationsAddBodyCategory,
+    PostApiRegulationsAddBodyStatus,
+    PostApiRegulationsAddBodySubject,
     RoadTypeEnum,
     SaveLocationDTO,
     SavePeriodDTO,
@@ -220,12 +223,50 @@ class DialogIntegration:
         """
         raise NotImplementedError("Subclasses must implement compute_clean_data method")
 
+    def create_measure(self, row: dict):
+        """
+        Create a single measure from a row of clean data.
+        Subclasses must implement this method.
+        """
+        raise NotImplementedError("Subclasses must implement create_measure method")
+
     def create_regulations(self, clean_data: pl.DataFrame) -> list[PostApiRegulationsAddBody]:
         """
         Create regulation payloads from clean data.
-        Returns a dict mapping regulation_id to PostApiRegulationsAddBody.
+        Groups by regulation_identifier and creates measures for each group.
+        Uses precomputed regulation fields from the DataFrame.
         """
-        raise NotImplementedError("Subclasses must implement create_regulations method")
+        regulations = []
+
+        for regulation_id, group_df in clean_data.group_by("regulation_identifier"):
+            # Create measures for all rows in this regulation
+            measures = []
+            for row in group_df.iter_rows(named=True):
+                try:
+                    measures.append(self.create_measure(row))
+                except Exception as e:
+                    logger.error(f"Error creating measure: {e}")
+
+            # Skip if no measures were created
+            if not measures:
+                continue
+
+            # Get regulation fields from first row (all rows have same values)
+            first_row = group_df.row(0, named=True)
+
+            regulations.append(
+                PostApiRegulationsAddBody(
+                    identifier=first_row["regulation_identifier"],
+                    category=PostApiRegulationsAddBodyCategory(first_row["regulation_category"]),
+                    status=PostApiRegulationsAddBodyStatus(first_row["regulation_status"]),
+                    subject=PostApiRegulationsAddBodySubject(first_row["regulation_subject"]),
+                    title=first_row["regulation_title"],
+                    other_category_text=first_row["regulation_other_category_text"],
+                    measures=measures,  # type: ignore
+                )
+            )
+
+        return regulations
 
     def create_save_period_dto(self, measure: dict) -> SavePeriodDTO:
         """
