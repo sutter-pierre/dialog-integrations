@@ -19,6 +19,7 @@ from api.dia_log_client.api.private.put_api_regulations_publish import (
 )
 from api.dia_log_client.models import (
     PostApiRegulationsAddBody,
+    SavePeriodDTO,
 )
 from settings import OrganizationSettings
 
@@ -181,6 +182,20 @@ class DialogIntegration:
         Returns a dict mapping regulation_id to PostApiRegulationsAddBody.
         """
         raise NotImplementedError("Subclasses must implement create_regulations method")
+
+    def create_save_period_dto(self, measure: dict) -> SavePeriodDTO:
+        """
+        Create a SavePeriodDTO from a measure with period_ prefixed fields.
+        Any field starting with 'period_' will be mapped to SavePeriodDTO,
+        with the prefix stripped (e.g., period_start_date -> start_date).
+        """
+        period_fields = {}
+        for key, value in measure.items():
+            if key.startswith("period_"):
+                field_name = key.replace("period_", "", 1)
+                period_fields[field_name] = value
+
+        return SavePeriodDTO(**period_fields)
 
     def fetch_regulation_ids(self) -> list[str]:
         logger.info(f"Fetching identifiers for organization: {self.organization}")

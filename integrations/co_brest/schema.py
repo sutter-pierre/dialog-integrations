@@ -70,6 +70,13 @@ class BrestMeasure(TypedDict):
     HAUTEUR: float
     LARGEUR: float
     DT_MAT: datetime | None
+    # Period fields (prefixed with period_)
+    period_start_date: str | None
+    period_end_date: str | None
+    period_start_time: str | None
+    period_end_time: str | None
+    period_recurrence_type: str | None
+    period_is_permanent: bool | None
 
 
 BREST_SCHEMA = typed_dict_to_polars_schema(BrestMeasure)

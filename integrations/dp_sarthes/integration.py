@@ -1,4 +1,5 @@
 import io
+from typing import cast
 
 import polars as pl
 import requests
@@ -18,6 +19,7 @@ from api.dia_log_client.models import (
     SaveRawGeoJSONDTO,
     SaveVehicleSetDTO,
 )
+from integrations.dp_sarthes.schema import SarthesMeasure
 from integrations.shared import DialogIntegration
 
 URL = (
@@ -55,9 +57,15 @@ class Integration(DialogIntegration):
                     pl.col("id"),
                     pl.col("title"),
                     pl.col("VITESSE").alias("max_speed"),
-                    pl.col("start_date"),
                     pl.col("geometry"),
                     pl.col("label"),
+                    # Period fields
+                    pl.col("period_start_date"),
+                    pl.col("period_end_date"),
+                    pl.col("period_start_time"),
+                    pl.col("period_end_time"),
+                    pl.col("period_recurrence_type"),
+                    pl.col("period_is_permanent"),
                 ]
             )
         )
@@ -67,6 +75,7 @@ class Integration(DialogIntegration):
 
         for row in clean_data.iter_rows(named=True):
             try:
+                row = cast(SarthesMeasure, row)
                 measure = self.create_measure(row)
 
                 status = (
@@ -91,35 +100,21 @@ class Integration(DialogIntegration):
 
         return regulations
 
-    def create_measure(self, row: dict) -> SaveMeasureDTO:
+    def create_measure(self, measure: SarthesMeasure) -> SaveMeasureDTO:
         return SaveMeasureDTO(
             type_=MeasureTypeEnum.SPEEDLIMITATION,
-            max_speed=int(row["max_speed"]),
-            periods=[self.create_save_period_dto(row)],
-            locations=[self.create_save_location_dto(row)],
+            max_speed=int(measure["max_speed"]),
+            periods=[self.create_save_period_dto(measure)],
+            locations=[self.create_save_location_dto(measure)],
             vehicle_set=SaveVehicleSetDTO(all_vehicles=True),
         )
 
-    def create_save_period_dto(self, row: dict) -> SavePeriodDTO:
-        start_date = row.get("start_date")
-
-        return SavePeriodDTO(
-            start_date=start_date,
-            end_date=None,
-            start_time=None,
-            end_time=None,
-            recurrence_type=PeriodRecurrenceTypeEnum.EVERYDAY,
-            is_permanent=True,
-            time_slots=None,
-            daily_range=None,
-        )
-
-    def create_save_location_dto(self, row: dict) -> SaveLocationDTO:
+    def create_save_location_dto(self, measure: SarthesMeasure) -> SaveLocationDTO:
         return SaveLocationDTO(
             road_type=RoadTypeEnum.RAWGEOJSON,
             raw_geo_json=SaveRawGeoJSONDTO(
-                label=row["label"],
-                geometry=row["geometry"],
+                label=measure["label"],
+                geometry=measure["geometry"],
             ),
         )
 
@@ -188,15 +183,32 @@ def compute_title(df: pl.DataFrame) -> pl.DataFrame:
 
 def compute_start_date(df: pl.DataFrame) -> pl.DataFrame:
     """
-    Create start_date from annee column (January 1st of the year).
-    Falls back to date_modif if annee is not present.
+    Compute all period fields for SavePeriodDTO.
+    - period_start_date: from annee (Jan 1st) or date_modif as fallback
+    - period_end_date, period_start_time, period_end_time: None
+    - period_recurrence_type: EVERYDAY
+    - period_is_permanent: True
     """
-    return df.with_columns(
+    # Log how many rows are using fallback date
+    n_missing_annee = df.select(pl.col("annee").is_null().sum()).item()
+    if n_missing_annee > 0:
+        logger.info(
+            f"Using date_modif as fallback for {n_missing_annee} rows with missing annee"
+        )
+
+    return df.with_columns([
+        # Start date from annee or date_modif
         pl.when(pl.col("annee").is_not_null())
         .then(pl.col("annee").cast(pl.Int64).cast(pl.Utf8) + pl.lit("-01-01T00:00:00Z"))
         .otherwise(pl.col("date_modif"))
-        .alias("start_date")
-    )
+        .alias("period_start_date"),
+        # Other period fields
+        pl.lit(None).alias("period_end_date"),
+        pl.lit(None).alias("period_start_time"),
+        pl.lit(None).alias("period_end_time"),
+        pl.lit("everyDay").alias("period_recurrence_type"),
+        pl.lit(True).alias("period_is_permanent"),
+    ])
 
 
 def compute_location_label(df: pl.DataFrame) -> pl.DataFrame:

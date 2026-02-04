@@ -16,7 +16,6 @@ from shapely.ops import transform
 
 from api.dia_log_client.models import (
     MeasureTypeEnum,
-    PeriodRecurrenceTypeEnum,
     PostApiRegulationsAddBody,
     PostApiRegulationsAddBodyCategory,
     PostApiRegulationsAddBodyStatus,
@@ -24,7 +23,6 @@ from api.dia_log_client.models import (
     RoadTypeEnum,
     SaveLocationDTO,
     SaveMeasureDTO,
-    SavePeriodDTO,
     SaveRawGeoJSONDTO,
     SaveVehicleSetDTO,
 )
@@ -79,6 +77,7 @@ class Integration(DialogIntegration):
                 ~(pl.col("DESCRIPTIF").eq("Sens interdit / Sens unique") & pl.col("SENS").eq(1))
             )
             .filter(~(pl.col("NOARR").eq("")))
+            .pipe(compute_save_period_fields)
         )
 
     def cast_boolean_column(self, column_name: str) -> pl.Expr:
@@ -158,21 +157,6 @@ class Integration(DialogIntegration):
 
         return SaveMeasureDTO(**params)
 
-    def create_save_period_dto(self, measure: BrestMeasure) -> SavePeriodDTO:
-        dt = measure.get("DT_MAT")
-        start_date = dt.strftime("%Y-%m-%dT%H:%M:%SZ") if dt else None
-
-        return SavePeriodDTO(
-            start_date=start_date,
-            end_date=None,
-            start_time=None,
-            end_time=None,
-            recurrence_type=PeriodRecurrenceTypeEnum.EVERYDAY,
-            is_permanent=True,
-            time_slots=None,
-            daily_range=None,
-        )
-
     def create_save_location_dto(self, measure: BrestMeasure) -> SaveLocationDTO:
         geom_wkt = measure["geometry"]
         assert geom_wkt is not None, "geometry must be defined"
@@ -244,3 +228,35 @@ class Integration(DialogIntegration):
         cleaned = {k: v for k, v in params.items() if v not in (None, [], {})}
 
         return SaveVehicleSetDTO(**cleaned)
+
+
+def compute_save_period_fields(df: pl.DataFrame) -> pl.DataFrame:
+    """
+    Compute all period fields for SavePeriodDTO.
+    - period_start_date: from DT_MAT field
+    - period_end_date, period_start_time, period_end_time: None
+    - period_recurrence_type: EVERYDAY
+    - period_is_permanent: True
+    Filter out rows where DT_MAT is null.
+    """
+    # Count rows with null DT_MAT before filtering
+    n_null_dt_mat = df.select(pl.col("DT_MAT").is_null().sum()).item()
+    if n_null_dt_mat > 0:
+        logger.warning(
+            f"Dropping {n_null_dt_mat} rows with null DT_MAT (no start date available)"
+        )
+
+    # Filter out rows where DT_MAT is null
+    df = df.filter(pl.col("DT_MAT").is_not_null())
+
+    # Compute all period fields
+    return df.with_columns([
+        pl.col("DT_MAT")
+        .dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+        .alias("period_start_date"),
+        pl.lit(None).alias("period_end_date"),
+        pl.lit(None).alias("period_start_time"),
+        pl.lit(None).alias("period_end_time"),
+        pl.lit("everyDay").alias("period_recurrence_type"),
+        pl.lit(True).alias("period_is_permanent"),
+    ])
