@@ -10,9 +10,7 @@ import polars as pl
 import requests
 from loguru import logger
 from pyproj import Transformer
-from shapely import wkt
 from shapely.geometry import mapping
-from shapely.ops import transform
 
 from api.dia_log_client.models import (
     MeasureTypeEnum,
@@ -21,9 +19,7 @@ from api.dia_log_client.models import (
     PostApiRegulationsAddBodyStatus,
     PostApiRegulationsAddBodySubject,
     RoadTypeEnum,
-    SaveLocationDTO,
     SaveMeasureDTO,
-    SaveRawGeoJSONDTO,
     SaveVehicleSetDTO,
 )
 from integrations.co_brest.schema import (
@@ -89,6 +85,7 @@ class Integration(DialogIntegration):
             )
             .filter(~(pl.col("NOARR").eq("")))
             .pipe(compute_save_period_fields)
+            .pipe(compute_save_location_fields)
         )
 
     def cast_boolean_column(self, column_name: str) -> pl.Expr:
@@ -168,21 +165,6 @@ class Integration(DialogIntegration):
             del params["max_speed"]
 
         return SaveMeasureDTO(**params)
-
-    def create_save_location_dto(self, measure: BrestMeasure) -> SaveLocationDTO:
-        geom_wkt = measure["geometry"]
-        assert geom_wkt is not None, "geometry must be defined"
-        geom_wgs84 = transform(transformer.transform, wkt.loads(geom_wkt))
-
-        geometry = json.dumps(mapping(geom_wgs84))
-
-        return SaveLocationDTO(
-            road_type=RoadTypeEnum.RAWGEOJSON,
-            raw_geo_json=SaveRawGeoJSONDTO(
-                label=f"{measure['LIBCO']} – {measure['LIBRU']}",
-                geometry=geometry,
-            ),
-        )
 
     def create_save_vehicle_dto(
         self,
@@ -268,5 +250,48 @@ def compute_save_period_fields(df: pl.DataFrame) -> pl.DataFrame:
             pl.lit(None).alias("period_end_time"),
             pl.lit("everyDay").alias("period_recurrence_type"),
             pl.lit(True).alias("period_is_permanent"),
+        ]
+    )
+
+
+def compute_save_location_fields(df: pl.DataFrame) -> pl.DataFrame:
+    """
+    Compute all location fields for SaveLocationDTO.
+    - location_road_type: always RoadTypeEnum.RAWGEOJSON for Brest
+    - location_label: from LIBCO and LIBRU fields
+    - location_geometry: from geometry field (WKT) transformed to GeoJSON (WGS84)
+    Filter out rows where geometry is null.
+    """
+    # Count rows with null geometry before filtering
+    n_null_geometry = df.select(pl.col("geometry").is_null().sum()).item()
+    if n_null_geometry > 0:
+        logger.warning(f"Dropping {n_null_geometry} rows with null geometry")
+
+    # Filter out rows where geometry is null
+    df = df.filter(pl.col("geometry").is_not_null())
+
+    # Transform geometries using geopandas (thread-safe approach)
+    # Convert to pandas to work with geopandas
+    pdf = df.to_pandas()
+
+    # Create GeoDataFrame from WKT
+    gdf = gpd.GeoDataFrame(pdf, geometry=gpd.GeoSeries.from_wkt(pdf["geometry"]), crs="EPSG:2154")
+
+    # Reproject to WGS84
+    gdf = gdf.to_crs("EPSG:4326")
+
+    # Convert geometry to GeoJSON string
+    pdf["location_geometry"] = gdf.geometry.apply(lambda geom: json.dumps(mapping(geom)))
+
+    # Convert back to Polars
+    df = pl.from_pandas(pdf)
+
+    return df.with_columns(
+        [
+            # Road type (always RAWGEOJSON as enum string value)
+            pl.lit(RoadTypeEnum.RAWGEOJSON.value).alias("location_road_type"),
+            # Label from LIBCO and LIBRU
+            (pl.col("LIBCO") + pl.lit(" – ") + pl.col("LIBRU")).alias("location_label"),
+            # location_geometry already computed above
         ]
     )

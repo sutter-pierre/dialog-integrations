@@ -27,8 +27,6 @@ class SarthesMeasure(TypedDict):
     id: str
     title: str
     max_speed: int
-    geometry: str
-    label: str
     # Period fields (prefixed with period_)
     period_start_date: str | None
     period_end_date: str | None
@@ -36,3 +34,7 @@ class SarthesMeasure(TypedDict):
     period_end_time: str | None
     period_recurrence_type: PeriodRecurrenceTypeEnum | None
     period_is_permanent: bool | None
+    # Location fields (prefixed with location_)
+    location_road_type: str
+    location_label: str
+    location_geometry: str

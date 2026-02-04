@@ -13,9 +13,7 @@ from api.dia_log_client.models import (
     PostApiRegulationsAddBodyStatus,
     PostApiRegulationsAddBodySubject,
     RoadTypeEnum,
-    SaveLocationDTO,
     SaveMeasureDTO,
-    SaveRawGeoJSONDTO,
     SaveVehicleSetDTO,
 )
 from integrations.dp_sarthes.schema import SarthesMeasure, SarthesRawDataSchema
@@ -49,16 +47,13 @@ class Integration(DialogIntegration):
             .pipe(build_id_and_drop_duplicates)
             .pipe(compute_title)
             .pipe(compute_start_date)
-            .pipe(compute_location_label)
-            .pipe(compute_geometry)
-            .filter(pl.col("geometry").is_not_null())
+            .pipe(compute_save_location_fields)
+            .filter(pl.col("location_geometry").is_not_null())
             .select(
                 [
                     pl.col("id"),
                     pl.col("title"),
                     pl.col("VITESSE").alias("max_speed"),
-                    pl.col("geometry"),
-                    pl.col("label"),
                     # Period fields
                     pl.col("period_start_date"),
                     pl.col("period_end_date"),
@@ -66,6 +61,10 @@ class Integration(DialogIntegration):
                     pl.col("period_end_time"),
                     pl.col("period_recurrence_type"),
                     pl.col("period_is_permanent"),
+                    # Location fields
+                    pl.col("location_road_type"),
+                    pl.col("location_label"),
+                    pl.col("location_geometry"),
                 ]
             )
         )
@@ -105,17 +104,8 @@ class Integration(DialogIntegration):
             type_=MeasureTypeEnum.SPEEDLIMITATION,
             max_speed=int(measure["max_speed"]),
             periods=[self.create_save_period_dto(measure)],  # type: ignore
-            locations=[self.create_save_location_dto(measure)],
+            locations=[self.create_save_location_dto(measure)],  # type: ignore
             vehicle_set=SaveVehicleSetDTO(all_vehicles=True),
-        )
-
-    def create_save_location_dto(self, measure: SarthesMeasure) -> SaveLocationDTO:
-        return SaveLocationDTO(
-            road_type=RoadTypeEnum.RAWGEOJSON,
-            raw_geo_json=SaveRawGeoJSONDTO(
-                label=measure["label"],
-                geometry=measure["geometry"],
-            ),
         )
 
 
@@ -213,20 +203,34 @@ def compute_start_date(df: pl.DataFrame) -> pl.DataFrame:
     )
 
 
-def compute_location_label(df: pl.DataFrame) -> pl.DataFrame:
+def compute_save_location_fields(df: pl.DataFrame) -> pl.DataFrame:
     """
-    Create label for location from loc_txt field, fallback to title if not available.
+    Compute all location fields for SaveLocationDTO.
+    - location_road_type: always RoadTypeEnum.RAWGEOJSON for Sarthes
+    - location_label: from loc_txt field, fallback to title
+    - location_geometry: from geo_shape field (already in GeoJSON format)
+    Filter out rows where geo_shape is null.
     """
+    # Count rows with null geo_shape before filtering
+    n_null_geometry = df.select(pl.col("geo_shape").is_null().sum()).item()
+    if n_null_geometry > 0:
+        logger.warning(
+            f"Dropping {n_null_geometry} rows with null geo_shape (no geometry available)"
+        )
+
+    # Filter out rows where geo_shape is null
+    df = df.filter(pl.col("geo_shape").is_not_null())
+
     return df.with_columns(
-        pl.when(pl.col("loc_txt").is_not_null() & (pl.col("loc_txt") != ""))
-        .then(pl.col("loc_txt"))
-        .otherwise(pl.col("title"))
-        .alias("label")
+        [
+            # Road type (always RAWGEOJSON as enum string value)
+            pl.lit(RoadTypeEnum.RAWGEOJSON.value).alias("location_road_type"),
+            # Label from loc_txt or title
+            pl.when(pl.col("loc_txt").is_not_null() & (pl.col("loc_txt") != ""))
+            .then(pl.col("loc_txt"))
+            .otherwise(pl.col("title"))
+            .alias("location_label"),
+            # Geometry from geo_shape
+            pl.col("geo_shape").alias("location_geometry"),
+        ]
     )
-
-
-def compute_geometry(df: pl.DataFrame) -> pl.DataFrame:
-    """
-    Rename geo_shape to geometry (it's already in GeoJSON format).
-    """
-    return df.rename({"geo_shape": "geometry"})

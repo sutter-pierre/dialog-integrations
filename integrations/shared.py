@@ -20,7 +20,10 @@ from api.dia_log_client.api.private.put_api_regulations_publish import (
 )
 from api.dia_log_client.models import (
     PostApiRegulationsAddBody,
+    RoadTypeEnum,
+    SaveLocationDTO,
     SavePeriodDTO,
+    SaveRawGeoJSONDTO,
 )
 from settings import OrganizationSettings
 
@@ -237,6 +240,22 @@ class DialogIntegration:
                 period_fields[field_name] = value
 
         return SavePeriodDTO(**period_fields)
+
+    def create_save_location_dto(self, measure: dict) -> SaveLocationDTO:
+        """
+        Create a SaveLocationDTO from a measure with location_ prefixed fields.
+        Expects location_road_type (string), location_label, and location_geometry fields.
+        """
+        road_type_value = measure["location_road_type"]
+        road_type = RoadTypeEnum(road_type_value)
+
+        return SaveLocationDTO(
+            road_type=road_type,
+            raw_geo_json=SaveRawGeoJSONDTO(
+                label=measure["location_label"],
+                geometry=measure["location_geometry"],
+            ),
+        )
 
     def fetch_regulation_ids(self) -> list[str]:
         logger.info(f"Fetching identifiers for organization: {self.organization}")

@@ -116,3 +116,64 @@ def test_compute_save_period_fields_filters_null_dt_mat():
 
     assert result.height == 2
     assert result["NOARR"].to_list() == ["A", "C"]
+
+
+def test_compute_save_location_fields():
+    """Test that compute_save_location_fields creates all required fields."""
+    from api.dia_log_client.models import RoadTypeEnum
+    from integrations.co_brest.integration import compute_save_location_fields
+
+    df = pl.DataFrame(
+        {
+            "LIBCO": ["Commune A", "Commune B"],
+            "LIBRU": ["Rue 1", "Rue 2"],
+            "geometry": [
+                "POINT (150000 6850000)",  # Valid EPSG:2154 (Lambert 93) coordinates for Brest area
+                "LINESTRING (150000 6850000, 150100 6850100)",
+            ],
+        }
+    )
+
+    result = compute_save_location_fields(df)
+
+    # Check all location fields exist
+    assert "location_road_type" in result.columns
+    assert "location_label" in result.columns
+    assert "location_geometry" in result.columns
+
+    # Check road_type is always RAWGEOJSON enum value
+    assert result["location_road_type"][0] == RoadTypeEnum.RAWGEOJSON.value
+    assert result["location_road_type"][1] == RoadTypeEnum.RAWGEOJSON.value
+
+    # Check label is constructed from LIBCO and LIBRU
+    assert result["location_label"][0] == "Commune A – Rue 1"
+    assert result["location_label"][1] == "Commune B – Rue 2"
+
+    # Check geometry is transformed to GeoJSON (should contain "type" and "coordinates")
+    import json
+
+    geom0 = json.loads(result["location_geometry"][0])
+    assert "type" in geom0
+    assert "coordinates" in geom0
+
+
+def test_compute_save_location_fields_filters_null_geometry():
+    """Test that rows with null geometry are filtered out."""
+    from integrations.co_brest.integration import compute_save_location_fields
+
+    df = pl.DataFrame(
+        {
+            "LIBCO": ["Commune A", "Commune B", "Commune C"],
+            "LIBRU": ["Rue 1", "Rue 2", "Rue 3"],
+            "geometry": [
+                "POINT (150000 6850000)",  # Valid EPSG:2154 coordinates
+                None,
+                "LINESTRING (150000 6850000, 150100 6850100)",
+            ],
+        }
+    )
+
+    result = compute_save_location_fields(df)
+
+    assert result.height == 2
+    assert result["location_label"].to_list() == ["Commune A – Rue 1", "Commune C – Rue 3"]

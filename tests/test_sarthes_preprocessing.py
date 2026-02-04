@@ -3,10 +3,8 @@
 import polars as pl
 import pytest
 
-from integrations.dp_sarthes.integration import Integration
+from integrations.dp_sarthes.integration import Integration, compute_start_date
 from integrations.dp_sarthes.schema import SarthesRawDataSchema
-from integrations.dp_sarthes.integration import compute_start_date
-
 
 
 @pytest.fixture
@@ -101,3 +99,59 @@ def test_compute_start_date_creates_all_period_fields():
     assert result["period_recurrence_type"][0] == "everyDay"
     assert result["period_is_permanent"][0] is True
     assert result["period_end_date"][0] is None
+
+
+def test_compute_save_location_fields():
+    """Test that compute_save_location_fields creates all required fields."""
+    from api.dia_log_client.models import RoadTypeEnum
+    from integrations.dp_sarthes.integration import compute_save_location_fields
+
+    df = pl.DataFrame(
+        {
+            "loc_txt": ["Route de Paris", None, ""],
+            "title": ["Title 1", "Title 2", "Title 3"],
+            "geo_shape": [
+                '{"type": "Point", "coordinates": [0, 0]}',
+                '{"type": "LineString"}',
+                '{"type": "Polygon"}',
+            ],
+        }
+    )
+
+    result = compute_save_location_fields(df)
+
+    # Check all location fields exist
+    assert "location_road_type" in result.columns
+    assert "location_label" in result.columns
+    assert "location_geometry" in result.columns
+
+    # Check road_type is always RAWGEOJSON enum value
+    assert result["location_road_type"][0] == RoadTypeEnum.RAWGEOJSON.value
+    assert result["location_road_type"][1] == RoadTypeEnum.RAWGEOJSON.value
+    assert result["location_road_type"][2] == RoadTypeEnum.RAWGEOJSON.value
+
+    # Check label uses loc_txt when present, otherwise title
+    assert result["location_label"][0] == "Route de Paris"
+    assert result["location_label"][1] == "Title 2"
+    assert result["location_label"][2] == "Title 3"
+
+    # Check geometry is passed through from geo_shape
+    assert result["location_geometry"][0] == '{"type": "Point", "coordinates": [0, 0]}'
+
+
+def test_compute_save_location_fields_filters_null_geometry():
+    """Test that rows with null geometry are filtered out."""
+    from integrations.dp_sarthes.integration import compute_save_location_fields
+
+    df = pl.DataFrame(
+        {
+            "loc_txt": ["Route 1", "Route 2", "Route 3"],
+            "title": ["Title 1", "Title 2", "Title 3"],
+            "geo_shape": ['{"type": "Point"}', None, '{"type": "LineString"}'],
+        }
+    )
+
+    result = compute_save_location_fields(df)
+
+    assert result.height == 2
+    assert result["location_label"].to_list() == ["Route 1", "Route 3"]

@@ -103,6 +103,10 @@ class BrestMeasure(TypedDict):
     period_end_time: str | None
     period_recurrence_type: str | None
     period_is_permanent: bool | None
+    # Location fields (prefixed with location_)
+    location_road_type: str
+    location_label: str
+    location_geometry: str
 
 
 BREST_SCHEMA = typed_dict_to_polars_schema(BrestMeasure)
